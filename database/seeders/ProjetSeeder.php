@@ -13,14 +13,26 @@ class ProjetSeeder extends Seeder
      */
     public function run(): void
     {
-        Projet::create([
-            'nom_projet' => 'ERP',
-            'lien_git' => 'https://github.com/tayeb-a11/erp.git'
-        ]);
+        $projets = [
+            [
+                'nom_projet' => 'ERP',
+                'lien_git' => 'https://github.com/tayeb-a11/erp.git'
+            ],
+            [
+                'nom_projet' => 'Commercial',
+                'lien_git' => 'https://github.com/tayeb-a11/comercial.git'
+            ],
+            [
+                'nom_projet' => 'Restaurant',
+                'lien_git' => 'https://github.com/tayeb-a11/resto.git'
+            ]
+        ];
 
-        Projet::create([
-            'nom_projet' => 'Commercial',
-            'lien_git' => 'https://github.com/tayeb-a11/comercial.git'
-        ]);
+        foreach ($projets as $projet) {
+            Projet::firstOrCreate(
+                ['nom_projet' => $projet['nom_projet']],
+                $projet
+            );
+        }
     }
 }
