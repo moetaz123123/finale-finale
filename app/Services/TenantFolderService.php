@@ -17,32 +17,73 @@ class TenantFolderService
         $domainName = $domain;
         
         // Utiliser /home/tenants/ pour organiser les dossiers des entreprises
-        $basePath = "/home/tenants/{$folderName}";
+        $basePath = "/home/{$folderName}";
         $wwwPath = "{$basePath}/www.{$folderName}.{$domainName}";
 
+        \Log::info('Début création des dossiers du tenant', [
+            'companyName' => $companyName,
+            'subdomain' => $subdomain,
+            'basePath' => $basePath,
+            'wwwPath' => $wwwPath
+        ]);
+
         try {
-            // 1. Créer le dossier principal de l'entreprise directement en PHP
+            // 1. Créer le dossier principal de l'entreprise avec sudo
             if (!File::exists($basePath)) {
-                exec("sudo mkdir -p $basePath");
-                // On ne corrige plus ici, on le fait à la fin
+                exec("sudo mkdir -p $basePath 2>&1", $outputBase, $returnCodeBase);
+                \Log::info('Création du dossier principal', [
+                    'basePath' => $basePath,
+                    'output' => $outputBase,
+                    'returnCode' => $returnCodeBase
+                ]);
+                if ($returnCodeBase !== 0) {
+                    throw new \Exception("Erreur lors de la création du dossier principal: " . implode("\n", $outputBase));
+                }
             }
 
-            // 2. Créer le dossier www (le clonage sera fait par le contrôleur)
+            // 2. Créer le dossier www avec sudo
             if (!File::exists($wwwPath)) {
-                File::makeDirectory($wwwPath, 0755, true);
+                exec("sudo mkdir -p $wwwPath 2>&1", $outputWww, $returnCodeWww);
+                \Log::info('Création du dossier www', [
+                    'wwwPath' => $wwwPath,
+                    'output' => $outputWww,
+                    'returnCode' => $returnCodeWww
+                ]);
+                if ($returnCodeWww !== 0) {
+                    throw new \Exception("Erreur lors de la création du dossier www: " . implode("\n", $outputWww));
+                }
             } else {
                 // Si le dossier existe déjà, retourner simplement le chemin
                 // Corriger les droits même si le dossier existe déjà
                 $this->fixPermissions($basePath);
+                \Log::info('Le dossier www existe déjà, permissions corrigées', [
+                    'wwwPath' => $wwwPath
+                ]);
                 return $wwwPath;
             }
 
             // Corriger les droits sur tous les dossiers créés
             $this->fixPermissions($basePath);
+            \Log::info('Permissions corrigées sur les dossiers', [
+                'basePath' => $basePath
+            ]);
+
+            // 3. Copier le .env si besoin
+            if (!file_exists("$wwwPath/.env") && file_exists("$wwwPath/.env.example")) {
+                copy("$wwwPath/.env.example", "$wwwPath/.env");
+                \Log::info('Copie de .env.example vers .env', [
+                    'wwwPath' => $wwwPath
+                ]);
+            }
 
             return $wwwPath;
             
         } catch (\Exception $e) {
+            \Log::error('Erreur lors de la création des dossiers du tenant', [
+                'error' => $e->getMessage(),
+                'basePath' => $basePath,
+                'wwwPath' => $wwwPath
+            ]);
             throw new \Exception("Erreur lors de la création des dossiers: " . $e->getMessage());
         }
     }
@@ -183,9 +224,18 @@ APACHE;
      */
     public function fixPermissions(string $folderPath): void
     {
-        // Correction récursive de la propriété et des permissions
-        exec("sudo chown -R www-data:www-data $folderPath");
-        exec("sudo chmod -R 775 $folderPath");
+        // Utiliser sudo pour définir les permissions
+        exec("sudo chown -R www-data:www-data $folderPath 2>&1", $output, $returnCode);
+        if ($returnCode !== 0) {
+            \Log::warning("Impossible de changer le propriétaire de $folderPath", ['output' => $output]);
+        }
+        
+        exec("sudo chmod -R 775 $folderPath 2>&1", $output, $returnCode);
+        if ($returnCode !== 0) {
+            \Log::warning("Impossible de changer les permissions de $folderPath", ['output' => $output]);
+        }
+        
+        \Log::info("Permissions corrigées pour $folderPath");
     }
 } 
 

@@ -15,6 +15,7 @@ use App\Services\TenantDatabaseService;
 use App\Services\TenantGitService;
 use App\Services\TenantVhostService;
 use App\Services\TenantEnvService;
+use App\Services\TenantSSHService;
 use Illuminate\Support\Str;
 
 class TenantService
@@ -24,19 +25,22 @@ class TenantService
     protected $vhostService;
     protected $envService;
     protected $folderService;
+    protected $sshService;
 
     public function __construct(
         TenantDatabaseService $dbService,
         TenantGitService $gitService,
         TenantVhostService $vhostService,
         TenantEnvService $envService,
-        TenantFolderService $folderService
+        TenantFolderService $folderService,
+        TenantSSHService $sshService
     ) {
         $this->dbService = $dbService;
         $this->gitService = $gitService;
         $this->vhostService = $vhostService;
         $this->envService = $envService;
         $this->folderService = $folderService;
+        $this->sshService = $sshService;
     }
 
     public function createTenant(array $data)
@@ -54,18 +58,16 @@ class TenantService
         // 1.bis Création de la base de test
         $this->dbService->createDatabase($databaseTestName);
 
-        // 2. Création des dossiers
-        $folderPath = $this->folderService->createTenantFolders(
-            $data['company_name'],
-            $subdomain,
-            $domain
-        );
+        // 2. Créer l'utilisateur SSH et l'environnement chroot (structure système + htdocs)
+        $sshInfo = $this->sshService->createSSHUser($data['company_name'], $subdomain);
+        $chrootPath = $sshInfo['chroot_path'];
+        $projectPath = "$chrootPath/htdocs/www.$subdomain.localhost";
 
-        // 3. Cloner le repository Git
-        $this->gitService->cloneRepository($projet->lien_git, $folderPath);
+        // 3. Cloner le repository Git directement dans le chroot
+        $this->gitService->cloneRepository($projet->lien_git, $projectPath);
 
-        // 4. Configurer l'application Laravel clonée (.env, permissions, clé, dépendances, migrations)
-        $this->envService->configureLaravelApp($folderPath, $data['company_name'], $subdomain, $databaseName);
+        // 4. Configurer l'application Laravel clonée (.env, permissions, clé, dépendances, migrations) dans le chroot
+        $this->envService->configureLaravelApp($projectPath, $data['company_name'], $subdomain, $databaseName);
 
         // 4.bis : Lancer le seeder ProjetSeeder pour le tenant (après les migrations, avant la création de l'admin)
         \Artisan::call('db:seed', [
@@ -73,11 +75,9 @@ class TenantService
             '--class' => 'ProjetSeeder',
             '--force' => true,
         ]);
-        \Log::info('ProjetSeeder exécuté pour le tenant', ['folder' => $folderPath]);
+        \Log::info('ProjetSeeder exécuté pour le tenant', ['folder' => $projectPath]);
 
-        // 5. Créer le virtual host Apache
-        // $this->vhostService->createApacheVhost($subdomain, $folderPath);
-        $this->vhostService->addHostEntry($subdomain);
+   
 
         // 6. Création du tenant (transaction sur la connexion principale)
         DB::beginTransaction();
@@ -85,7 +85,7 @@ class TenantService
             'name' => $data['company_name'],
             'subdomain' => $subdomain,
             'database' => $databaseName,
-            'folder_path' => $folderPath,
+            'folder_path' => $projectPath,
             'is_active' => true,
         ]);
         DB::commit();
@@ -104,16 +104,43 @@ class TenantService
         $user = DB::connection('tenant')->table('users')->where('id', $userId)->first();
         DB::connection('tenant')->commit();
 
-        $loginUrl = "http://www.$subdomain.localhost/login";
+        $loginUrl = "http://www.$subdomain.localhost:8000/";
 
         // Déclencher l'événement Registered pour la compatibilité Laravel
         event(new Registered($user));
 
+        // Générer la clé d'application Laravel dans le sous-dossier du tenant
+        $tenantPath = $projectPath;
+
+        // Installer les dépendances Composer
+        exec("cd $tenantPath && composer install --no-interaction --no-progress 2>&1", $outputComposer, $retComposer);
+        if ($retComposer !== 0) {
+            throw new \Exception('Erreur composer install : ' . implode(PHP_EOL, $outputComposer));
+        }
+
+        // Correction des permissions
+        exec('chown -R www-data:www-data ' . escapeshellarg($tenantPath));
+        exec('chmod -R 775 ' . escapeshellarg($tenantPath));
+        exec('chown www-data:www-data ' . escapeshellarg($tenantPath . '/.env'));
+        exec('chmod 664 ' . escapeshellarg($tenantPath . '/.env'));
+
+        // Génération de la clé
+        $this->envService->generateAppKey($tenantPath);
+
+        \Log::info('Après key:generate', [
+            'env_content' => file_get_contents("$tenantPath/.env"),
+        ]);
+
+        \Log::info('Création du tenant terminée sans erreur', ['tenant' => $tenant]);
         return [
             'tenant_name' => $tenant->name,
             'login_url' => $loginUrl,
             'admin_email' => $user->email,
-            'folder_path' => $folderPath,
+            'folder_path' => $projectPath,
+            'subdomain' => $tenant->subdomain,
+            'ssh_username' => $sshInfo['username'],
+            'ssh_port' => $sshInfo['ssh_port'],
+            'chroot_path' => $sshInfo['chroot_path'],
         ];
     }
 } 

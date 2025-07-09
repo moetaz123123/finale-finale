@@ -36,18 +36,32 @@ class TenantRegistrationController extends Controller
         return view('auth.tenant-register', compact('projets'));
     }
 
-    public function showSuccessPage(Request $request)
+    public function showSuccessPage()
     {
-        // Assurez-vous que les données sont bien passées en session flash
-        if (!session('tenant_name') || !session('login_url') || !session('admin_email')) {
-            return redirect()->route('tenant.register');
+        // Vérifier si les données de session sont disponibles
+        if (!session('tenant_name') || !session('login_url')) {
+            // Si pas de données, rediriger vers la création
+            return redirect()->route('tenant.register')
+                ->with('info', 'Session expirée. Veuillez créer un nouvel espace.');
         }
 
+        // Exemple de génération du nom SSH
+        $subdomain = session('subdomain');
+        $sshUser = 'tenant_' . $subdomain;
+        $chrootPath = '/home/' . $sshUser;
+
+        // Passe ces valeurs à la vue
+        $tenant_name = $subdomain; // ou la valeur correcte
+        $admin_email = session('admin_email');
         return view('auth.tenant-success', [
-            'tenant_name' => session('tenant_name'),
-            'login_url' => session('login_url'),
-            'admin_email' => session('admin_email'),
-            'folder_path' => session('folder_path'),
+            'tenant_name'   => $tenant_name,
+            'admin_email'   => $admin_email,
+            'folder_path'   => session('folder_path'),
+            'ssh_username'  => $sshUser,
+            'chroot_path'   => $chrootPath,
+            'subdomain'     => $subdomain,
+            'login_url'     => session('login_url'),
+            'ssh_port'      => 22, // ou la valeur dynamique si besoin
         ]);
     }
 
@@ -74,10 +88,17 @@ class TenantRegistrationController extends Controller
 
         try {
             $result = $this->tenantService->createTenant($validated);
+            \Log::info('Résultat création tenant', $result);
         } catch (\Exception $e) {
             return redirect()->route('tenant.register')
                 ->withErrors(['error' => 'Une erreur est survenue lors de la création de votre espace: ' . $e->getMessage()])
                 ->withInput();
+        }
+
+        if ($result instanceof \Illuminate\Http\JsonResponse) {
+            $data = $result->getData(true); // true = tableau associatif
+        } else {
+            $data = $result;
         }
 
         // Mettre les informations en session flash pour la page de succès
@@ -86,6 +107,15 @@ class TenantRegistrationController extends Controller
             'login_url' => $result['login_url'],
             'admin_email' => $result['admin_email'],
             'folder_path' => $result['folder_path'],
+            'subdomain' => $result['subdomain'],
         ]);
+    }
+
+    public function checkTenantExists(Request $request)
+    {
+        $companyName = $request->input('company_name');
+        $exists = \App\Models\Tenant::where('name', $companyName)->exists();
+
+        return response()->json(['exists' => $exists]);
     }
 }

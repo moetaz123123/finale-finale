@@ -25,6 +25,7 @@
         .error { background: #fee; color: #c33; padding: 10px; border-radius: 5px; margin-bottom: 1rem; border: 1px solid #fcc; }
         .error ul { list-style-position: inside; padding-left: 0; }
     </style>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
 </head>
 <body>
     <div class="container">
@@ -87,8 +88,68 @@
                     <input type="password" id="admin_password_confirmation" name="admin_password_confirmation" required>
                 </div>
                 
-                <button type="submit" class="submit-btn">Créer mon Espace</button>
+                <button type="submit" class="submit-btn" id="submit-btn">
+                    <span id="btn-text">Créer mon Espace</span>
+                    <span id="btn-spinner" style="display:none;margin-left:10px;vertical-align:middle;">
+                        <svg width="20" height="20" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="24" cy="24" r="20" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-dasharray="31.415, 31.415" transform="rotate(72 24 24)"><animateTransform attributeName="transform" type="rotate" from="0 24 24" to="360 24 24" dur="1s" repeatCount="indefinite"/></circle></svg>
+                    </span>
+                </button>
             </form>
+            <script>
+                // Spinner lors de la soumission du formulaire
+                document.querySelector('form').addEventListener('submit', function(e) {
+                    document.getElementById('btn-text').style.display = 'none';
+                    document.getElementById('btn-spinner').style.display = 'inline-block';
+                    document.getElementById('submit-btn').disabled = true;
+                });
+
+                const companyInput = document.getElementById('company_name');
+                const companyGroup = companyInput.closest('.form-group');
+                let tenantCheckTimeout;
+                let tenantCheckMessage = document.createElement('div');
+                tenantCheckMessage.style.marginTop = '5px';
+                tenantCheckMessage.style.fontSize = '0.95em';
+                companyGroup.appendChild(tenantCheckMessage);
+
+                companyInput.addEventListener('input', function() {
+                    clearTimeout(tenantCheckTimeout);
+                    tenantCheckMessage.textContent = '';
+                    tenantCheckMessage.style.color = '';
+
+                    if (this.value.trim().length < 2) {
+                        return;
+                    }
+
+                    tenantCheckTimeout = setTimeout(() => {
+                        fetch("{{ route('tenant.check.exists') }}", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "X-CSRF-TOKEN": document.querySelector('meta[name="csrf-token"]').getAttribute('content')
+                            },
+                            body: JSON.stringify({ company_name: this.value.trim() })
+                        })
+                        .then(response => {
+                            if (!response.ok) throw new Error('Network response was not ok');
+                            return response.json();
+                        })
+                        .then(data => {
+                            if (data.exists) {
+                                tenantCheckMessage.textContent = "Ce nom d'entreprise existe déjà.";
+                                tenantCheckMessage.style.color = "#c33";
+                            } else {
+                                tenantCheckMessage.textContent = "Nom d'entreprise disponible !";
+                                tenantCheckMessage.style.color = "#28a745";
+                            }
+                        })
+                        .catch((err) => {
+                            tenantCheckMessage.textContent = "Erreur lors de la vérification.";
+                            tenantCheckMessage.style.color = "#c33";
+                            console.error(err);
+                        });
+                    }, 500);
+                });
+            </script>
         </div>
     </div>
 </body>

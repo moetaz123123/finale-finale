@@ -11,13 +11,15 @@ class TenantGitService
             throw new \Exception('Git n\'est pas installé sur le système.');
         }
         if (!file_exists($destinationPath)) {
-            if (!mkdir($destinationPath, 0755, true)) {
-                throw new \Exception('Impossible de créer le dossier de destination: ' . $destinationPath);
-            }
+            exec('sudo mkdir -p ' . escapeshellarg($destinationPath));
+            exec('sudo chown -R www-data:www-data ' . escapeshellarg($destinationPath));
         }
         $files = scandir($destinationPath);
         if (count($files) > 2) {
-            throw new \Exception('Le dossier de destination n\'est pas vide: ' . $destinationPath);
+            // Supprimer automatiquement le dossier de destination s'il n'est pas vide
+            exec('sudo rm -rf ' . escapeshellarg($destinationPath));
+            exec('sudo mkdir -p ' . escapeshellarg($destinationPath));
+            exec('sudo chown -R www-data:www-data ' . escapeshellarg($destinationPath));
         }
         // Clonage sans sudo
         exec("git clone $gitUrl $destinationPath 2>&1", $output, $returnCode);
